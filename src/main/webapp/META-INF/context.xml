@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<Context path="">
+    <!-- Casdoor authentication (replaces org.keycloak.adapters.tomcat.KeycloakAuthenticatorValve).
+         casdoor-tomcat-valve and its dependencies must be in Tomcat's lib directory. -->
+    <Valve className="org.voror.auth.casdoor.CasdoorAuthenticatorValve"/>
+</Context>

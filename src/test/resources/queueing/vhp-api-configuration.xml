@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ApiConfiguration xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  xsi:noNamespaceSchemaLocation="../../../../Vhp-messaging-core/src/main/resources/ApiConfiguration.xsd">
+    <GetData>
+        <Pipeline>
+            <ValidateMessageType/>
+        </Pipeline>
+    </GetData>
+    <GetDataAsync>
+        <Pipeline>
+            <ValidateMessageType/>
+        </Pipeline>
+    </GetDataAsync>
+    <PostMessage>
+        <Pipeline>
+            <OpenEnvelope/>
+            <ValidateMessageType/>
+            <PostMessageToLog>
+                <EventType>Receive</EventType>
+            </PostMessageToLog>
+            <PostMessageToExchange>
+                <Exchange>VhpInbound</Exchange>
+                <RoutingHeader>SourceSystem</RoutingHeader>
+                <RoutingHeader>SenderLocalIdentifier</RoutingHeader>
+            </PostMessageToExchange>
+        </Pipeline>
+    </PostMessage>
+<PostMessageAsync>
+    <Pipeline>
+        <OpenEnvelope/>
+        <PostMessageToLog><EventType>Receive</EventType></PostMessageToLog>
+        <DetermineRelevantProtocolIds/>
+        <PostMessageToLog><EventType>Validate</EventType></PostMessageToLog>
+        <PostMessageToExchange>
+            <Exchange>VhpInbound</Exchange>
+            <RoutingHeader>SenderLocalIdentifier</RoutingHeader>
+        </PostMessageToExchange>
+        <ReturnResponseAcknowledgement/>
+    </Pipeline>
+</PostMessageAsync>
+</ApiConfiguration>

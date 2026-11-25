@@ -1,95 +1,464 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
-  <modelVersion>4.0.0</modelVersion>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
 
-  <groupId>org.endeavourhealth.dataservice</groupId>
-  <artifactId>dds-ui</artifactId>
-  <version>1.0-SNAPSHOT</version>
-  <packaging>pom</packaging>
+    <!--
+        Port of the Endeavour eds-ui (DDS UI, "Data Service Manager") to Java 21 / Tomcat 11 (Jakarta EE) /
+        Casdoor / MySQL 8.4, with a new Vue 3 front end (frontend/) that covers the original Angular UI plus
+        the additions made in the later dds-ui Vue port (queue server admin, queue reader instances).
 
-  <modules>
-    <module>api</module>
-    <module>frontend</module>
-  </modules>
+        As in vhp-messaging-api, the Endeavour back-end libraries are used unchanged and only the web tier
+        moves to jakarta.*. See README.md.
+    -->
+    <!--
+        No parent: the org.endeavourhealth:eds parent in .m2 was a hand-installed pom with no source
+        anywhere. All it provided was the discovery-versions import (below) and Java 21.
+    -->
+    <groupId>org.endeavourhealth</groupId>
+    <artifactId>vhp-dds-ui</artifactId>
+    <version>1.0-SNAPSHOT</version>
+    <packaging>war</packaging>
 
-  <properties>
-    <java.version>1.8</java.version>
-    <maven-aspectj-plugin.version>1.10</maven-aspectj-plugin.version>
-    <maven-compiler-plugin.version>3.1</maven-compiler-plugin.version>
-    <maven-dependency-plugin.version>3.1.1</maven-dependency-plugin.version>
-    <maven-deploy-plugin.version>2.4</maven-deploy-plugin.version>
-    <maven-release-plugin.version>2.5.3</maven-release-plugin.version>
-    <maven-surefire-plugin.version>2.12.4</maven-surefire-plugin.version>
-    <maven-sonar-plugin.version>3.5.0.1254</maven-sonar-plugin.version>
-    <frontend-maven-plugin.version>1.4</frontend-maven-plugin.version>
-    <node.version>v6.10.1</node.version>
+    <properties>
+        <java.version>21</java.version>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
-    <sonar.projectKey>endeavourhealth-discovery_DDS-UI</sonar.projectKey>
-    <sonar.organization>endeavourhealth-discovery</sonar.organization>
-    <sonar.host.url>https://sonarcloud.io</sonar.host.url>
-    <sonar.login>8ddba9bbb23a08a7cff43ecc620be3738a152b65</sonar.login>
-    <sonar.typescript.node>frontend/node/node</sonar.typescript.node>
-    <sonar.coverage.exclusions>**/api/**/*, **/dal/**/*, **/models/**/*, **/IMClient.java</sonar.coverage.exclusions>
-    <sonar.junit.reportPaths>target/surefire-reports</sonar.junit.reportPaths>
-  </properties>
+        <jersey3.version>3.1.10</jersey3.version>
+        <jackson2.version>2.18.1</jackson2.version>
+        <metrics4.version>4.2.28</metrics4.version>
+        <junit5.version>5.11.4</junit5.version>
+        <!-- Tests never touch a real config DB. SystemLibraryMySqlIntegrationTest (opt-in, -Ddds.test.mysql=true) points these
+             at a throwaway MySQL holding the config/admin/audit schemas; see the README. -->
+        <dds.test.config.url>jdbc:mysql://127.0.0.1:1/no-config-db-in-tests</dds.test.config.url>
+        <dds.test.config.username></dds.test.config.username>
+        <dds.test.config.password></dds.test.config.password>
 
-  <dependencyManagement>
+        <!-- Vue front end (frontend/), built by frontend-maven-plugin into frontend/dist and put in the WAR root.
+             -Dskip.frontend=true builds the WAR from an already-built frontend/dist. -->
+        <frontend.dir>${project.basedir}/frontend</frontend.dir>
+        <frontend.dist.dir>${frontend.dir}/dist</frontend.dist.dir>
+        <node.version>v20.17.0</node.version>
+        <skip.frontend>false</skip.frontend>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <!--
+                The Endeavour BOM (discovery-versions) pins Jersey to 2.25.1. Jersey 2 and 3 share
+                package names, so every Jersey/HK2 artifact must be forced onto the Jakarta (3.x) line.
+            -->
+            <dependency>
+                <groupId>org.glassfish.jersey</groupId>
+                <artifactId>jersey-bom</artifactId>
+                <version>${jersey3.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.glassfish.jersey.core</groupId>
+                <artifactId>jersey-client</artifactId>
+                <version>${jersey3.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.glassfish.jersey.core</groupId>
+                <artifactId>jersey-common</artifactId>
+                <version>${jersey3.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.glassfish.jersey.core</groupId>
+                <artifactId>jersey-server</artifactId>
+                <version>${jersey3.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.glassfish.jersey.containers</groupId>
+                <artifactId>jersey-container-servlet</artifactId>
+                <version>${jersey3.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.glassfish.jersey.containers</groupId>
+                <artifactId>jersey-container-servlet-core</artifactId>
+                <version>${jersey3.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.glassfish.jersey.media</groupId>
+                <artifactId>jersey-media-json-jackson</artifactId>
+                <version>${jersey3.version}</version>
+            </dependency>
+            <!-- Jersey 3 needs a recent Jackson; the Endeavour BOM pins 2.9.8 -->
+            <dependency>
+                <groupId>com.fasterxml.jackson</groupId>
+                <artifactId>jackson-bom</artifactId>
+                <version>${jackson2.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>io.dropwizard.metrics</groupId>
+                <artifactId>metrics-core</artifactId>
+                <version>${metrics4.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.dropwizard.metrics</groupId>
+                <artifactId>metrics-annotation</artifactId>
+                <version>${metrics4.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.dropwizard.metrics</groupId>
+                <artifactId>metrics-jvm</artifactId>
+                <version>${metrics4.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.dropwizard.metrics</groupId>
+                <artifactId>metrics-graphite</artifactId>
+                <version>${metrics4.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.dropwizard.metrics</groupId>
+                <artifactId>metrics-healthchecks</artifactId>
+                <version>${metrics4.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.dropwizard.metrics</groupId>
+                <artifactId>metrics-json</artifactId>
+                <version>${metrics4.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.dropwizard.metrics</groupId>
+                <artifactId>metrics-servlets</artifactId>
+                <version>${metrics4.version}</version>
+            </dependency>
+            <!-- Hibernate 5.2 proxies need a javassist that can define classes on Java 17+ -->
+            <dependency>
+                <groupId>org.javassist</groupId>
+                <artifactId>javassist</artifactId>
+                <version>3.30.2-GA</version>
+            </dependency>
+            <!--
+                Endeavour library versions (source: ../endeavour/discovery-versions). Imported LAST so the
+                Jersey/Jackson BOMs and explicit entries above take precedence over its old pins.
+            -->
+            <dependency>
+                <groupId>org.endeavourhealth</groupId>
+                <artifactId>discovery-versions</artifactId>
+                <version>1.0-SNAPSHOT</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
     <dependencies>
-      <dependency>
-        <groupId>org.endeavourhealth</groupId>
-        <artifactId>discovery-versions</artifactId>
-        <version>1.0-SNAPSHOT</version>
-        <type>pom</type>
-        <scope>import</scope>
-      </dependency>
+
+        <!-- ================================================================== -->
+        <!-- Endeavour back-end libraries (unchanged, org.endeavourhealth.*)     -->
+        <!-- Web-tier and Keycloak adapter pieces are excluded: they are javax   -->
+        <!-- and Jersey 2 based, and share package names with Jersey 3.          -->
+        <!-- ================================================================== -->
+        <dependency>
+            <groupId>org.endeavourhealth</groupId>
+            <artifactId>eds-messaging-core</artifactId>
+            <version>1.0-SNAPSHOT</version>
+            <exclusions>
+                <exclusion><groupId>org.glassfish.jersey.core</groupId><artifactId>*</artifactId></exclusion>
+                <exclusion><groupId>org.glassfish.jersey.containers</groupId><artifactId>*</artifactId></exclusion>
+                <exclusion><groupId>org.glassfish.jersey.media</groupId><artifactId>*</artifactId></exclusion>
+                <exclusion><groupId>org.glassfish.jersey.bundles.repackaged</groupId><artifactId>*</artifactId></exclusion>
+                <exclusion><groupId>org.glassfish.hk2</groupId><artifactId>*</artifactId></exclusion>
+                <exclusion><groupId>org.glassfish.hk2.external</groupId><artifactId>*</artifactId></exclusion>
+                <exclusion><groupId>javax.servlet</groupId><artifactId>*</artifactId></exclusion>
+                <exclusion><groupId>org.keycloak</groupId><artifactId>keycloak-adapter-core</artifactId></exclusion>
+                <exclusion><groupId>org.keycloak</groupId><artifactId>keycloak-adapter-spi</artifactId></exclusion>
+                <exclusion><groupId>org.keycloak</groupId><artifactId>keycloak-tomcat8-adapter</artifactId></exclusion>
+                <exclusion><groupId>org.endeavourhealth.common</groupId><artifactId>api</artifactId></exclusion>
+                <!-- JAXB RI 2.3.0 (via transforms) fails on Java 11+; replaced by jaxb-impl 2.3.9 below -->
+                <exclusion><groupId>com.sun.xml.bind</groupId><artifactId>jaxb-impl</artifactId></exclusion>
+                <exclusion><groupId>com.sun.xml.bind</groupId><artifactId>jaxb-core</artifactId></exclusion>
+            </exclusions>
+        </dependency>
+
+        <dependency>
+            <groupId>org.endeavourhealth.common</groupId>
+            <artifactId>core</artifactId>
+            <exclusions>
+                <!-- config DB and Endeavour DBs are MySQL; the driver is added back below (runtime) only for ConnectionManager.isPostgreSQL() -->
+                <exclusion><groupId>org.postgresql</groupId><artifactId>postgresql</artifactId></exclusion>
+                <exclusion><groupId>javax.servlet</groupId><artifactId>*</artifactId></exclusion>
+                <exclusion><groupId>org.keycloak</groupId><artifactId>keycloak-adapter-core</artifactId></exclusion>
+                <exclusion><groupId>org.keycloak</groupId><artifactId>keycloak-adapter-spi</artifactId></exclusion>
+                <exclusion><groupId>org.glassfish.jersey.core</groupId><artifactId>*</artifactId></exclusion>
+                <exclusion><groupId>org.glassfish.jersey.containers</groupId><artifactId>*</artifactId></exclusion>
+                <exclusion><groupId>org.glassfish.jersey.media</groupId><artifactId>*</artifactId></exclusion>
+                <exclusion><groupId>org.glassfish.hk2</groupId><artifactId>*</artifactId></exclusion>
+                <exclusion><groupId>org.glassfish.hk2.external</groupId><artifactId>*</artifactId></exclusion>
+            </exclusions>
+        </dependency>
+        <!--
+            Not to connect to anything (every database is MySQL): core's ConnectionManager.isPostgreSQL() does
+            `instanceof org.postgresql.jdbc.PgConnection`, so without this class the SFTP Reader and HL7 Receiver
+            endpoints fail with NoClassDefFoundError. Current driver, not the BOM's 9.4 (2016).
+        -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <version>42.7.4</version>
+            <scope>runtime</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.endeavourhealth.configmanager</groupId>
+            <artifactId>configmanager</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.endeavourhealth.common</groupId>
+            <artifactId>utility</artifactId>
+        </dependency>
+
+        <!--
+            Still needed on the classpath (not by our code): a few Endeavour classes
+            (QueueHelper, SubscriberApiAuditHelper, Snomed) link against javax.ws.rs types.
+            It is an API jar only and lives in the javax namespace, so it cannot clash with Jakarta.
+        -->
+        <dependency>
+            <groupId>javax.ws.rs</groupId>
+            <artifactId>javax.ws.rs-api</artifactId>
+            <version>2.1.1</version>
+        </dependency>
+
+        <!--
+            JAXB was removed from the JDK in 11; ConfigWrapper / pipeline config still use javax.xml.bind.
+            The implementation that common/transforms brings (com.sun.xml.bind jaxb-impl/jaxb-core 2.3.0) breaks on
+            Java 11+: its optimised accessors call sun.misc.Unsafe.defineClass, which is gone, so reading library
+            items (SystemHelper / QueryDocumentSerializer in OpenEnvelope) threw a NullPointerException
+            ("Failed to find or create system for service ..."). 2.3.0 is excluded above and replaced by 2.3.9,
+            the last javax-namespace release, which is self-contained (no separate jaxb-core).
+        -->
+        <dependency>
+            <groupId>javax.xml.bind</groupId>
+            <artifactId>jaxb-api</artifactId>
+            <version>2.3.1</version>
+        </dependency>
+        <dependency>
+            <groupId>com.sun.xml.bind</groupId>
+            <artifactId>jaxb-impl</artifactId>
+            <version>2.3.9</version>
+            <exclusions>
+                <!-- jakarta.xml.bind-api 2.3.x holds the javax.xml.bind packages (we use javax.xml.bind:jaxb-api 2.3.1)
+                     and would displace the 4.x jakarta.xml.bind API that Jersey 3 needs -->
+                <exclusion><groupId>jakarta.xml.bind</groupId><artifactId>jakarta.xml.bind-api</artifactId></exclusion>
+            </exclusions>
+        </dependency>
+
+        <dependency>
+            <groupId>commons-codec</groupId>
+            <artifactId>commons-codec</artifactId>
+        </dependency>
+
+        <!-- ================================================================== -->
+        <!-- Jakarta EE 10/11 web tier (Tomcat 11 provides servlet/annotations)  -->
+        <!-- ================================================================== -->
+        <dependency>
+            <groupId>jakarta.servlet</groupId>
+            <artifactId>jakarta.servlet-api</artifactId>
+            <version>6.1.0</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.annotation</groupId>
+            <artifactId>jakarta.annotation-api</artifactId>
+            <version>2.1.1</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.ws.rs</groupId>
+            <artifactId>jakarta.ws.rs-api</artifactId>
+            <version>3.1.0</version>
+        </dependency>
+
+        <!-- Jersey 3 -->
+        <dependency>
+            <groupId>org.glassfish.jersey.core</groupId>
+            <artifactId>jersey-server</artifactId>
+            <version>${jersey3.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.glassfish.jersey.core</groupId>
+            <artifactId>jersey-common</artifactId>
+            <version>${jersey3.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.glassfish.jersey.containers</groupId>
+            <artifactId>jersey-container-servlet</artifactId>
+            <version>${jersey3.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.glassfish.jersey.inject</groupId>
+            <artifactId>jersey-hk2</artifactId>
+            <version>${jersey3.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.glassfish.jersey.media</groupId>
+            <artifactId>jersey-media-json-jackson</artifactId>
+            <version>${jersey3.version}</version>
+        </dependency>
+
+        <!-- Metrics: @Timed resource metrics + container-level metrics (Jakarta variants) -->
+        <dependency>
+            <groupId>io.dropwizard.metrics</groupId>
+            <artifactId>metrics-annotation</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.dropwizard.metrics</groupId>
+            <artifactId>metrics-jersey31</artifactId>
+            <version>${metrics4.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.dropwizard.metrics</groupId>
+            <artifactId>metrics-jakarta-servlet6</artifactId>
+            <version>${metrics4.version}</version>
+        </dependency>
+
+        <!-- Swagger 1.5 annotations only (no javax jaxrs integration), as used by the original endpoints -->
+        <dependency>
+            <groupId>io.swagger</groupId>
+            <artifactId>swagger-annotations</artifactId>
+        </dependency>
+
+
+        <!-- Rabbit management API calls (RabbitEndpoint) use the JAX-RS client -->
+        <dependency>
+            <groupId>org.glassfish.jersey.core</groupId>
+            <artifactId>jersey-client</artifactId>
+            <version>${jersey3.version}</version>
+        </dependency>
+
+        <!-- RabbitMQ (queue reader commands, routing synchronise) -->
+        <dependency>
+            <groupId>com.rabbitmq</groupId>
+            <artifactId>amqp-client</artifactId>
+        </dependency>
+
+        <!-- Queue server admin (from the dds-ui port): SSH to the queue reader servers.
+             com.github.mwiede:jsch is the maintained drop-in fork of com.jcraft:jsch (same packages)
+             with support for current key and host-key algorithms. -->
+        <dependency>
+            <groupId>com.github.mwiede</groupId>
+            <artifactId>jsch</artifactId>
+            <version>0.2.21</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-csv</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>commons-io</groupId>
+            <artifactId>commons-io</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.google.guava</groupId>
+            <artifactId>guava</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.google.code.gson</groupId>
+            <artifactId>gson</artifactId>
+        </dependency>
+
+        <!-- Tests -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>${junit5.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <!-- deploys the real web.xml/context.xml on Tomcat 11 in Tomcat11SmokeTest -->
+        <dependency>
+            <groupId>org.apache.tomcat.embed</groupId>
+            <artifactId>tomcat-embed-core</artifactId>
+            <version>11.0.2</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
-  </dependencyManagement>
 
-  <build>
-    <plugins>
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-deploy-plugin</artifactId>
-        <version>${maven-deploy-plugin.version}</version>
-        <configuration>
-          <skip>true</skip>
-        </configuration>
-      </plugin>
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-release-plugin</artifactId>
-        <version>${maven-release-plugin.version}</version>
-        <configuration>
-          <autoVersionSubmodules>true</autoVersionSubmodules>
-        </configuration>
-      </plugin>
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-dependency-plugin</artifactId>
-        <version>${maven-dependency-plugin.version}</version>
-      </plugin>
-      <plugin>
-        <groupId>org.sonarsource.scanner.maven</groupId>
-        <artifactId>sonar-maven-plugin</artifactId>
-        <version>${maven-sonar-plugin.version}</version>
-      </plugin>
-    </plugins>
-  </build>
-
-  <repositories>
-    <repository>
-      <snapshots />
-      <id>snapshots</id>
-      <name>libs-snapshot</name>
-      <url>http://maven.endeavourhealth.net:8081/artifactory/libs-snapshot</url>
-    </repository>
-    <repository>
-      <snapshots>
-        <enabled>false</enabled>
-      </snapshots>
-      <id>central</id>
-      <name>libs-release</name>
-      <url>http://maven.endeavourhealth.net:8081/artifactory/libs-release</url>
-    </repository>
-  </repositories>
+    <build>
+        <finalName>vhp-dds-ui</finalName>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.13.0</version>
+                <configuration>
+                    <release>${java.version}</release>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.5.0</version>
+                <configuration>
+                    <environmentVariables>
+                        <!-- keep tests away from any real config DB on the build machine
+                             (ConfigManager defaults to PostgreSQL; ours is MySQL) -->
+                        <CONFIG_JDBC_CLASS>com.mysql.cj.jdbc.Driver</CONFIG_JDBC_CLASS>
+                        <CONFIG_JDBC_URL>${dds.test.config.url}</CONFIG_JDBC_URL>
+                        <CONFIG_JDBC_USERNAME>${dds.test.config.username}</CONFIG_JDBC_USERNAME>
+                        <CONFIG_JDBC_PASSWORD>${dds.test.config.password}</CONFIG_JDBC_PASSWORD>
+                    </environmentVariables>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>com.github.eirslett</groupId>
+                <artifactId>frontend-maven-plugin</artifactId>
+                <version>1.15.1</version>
+                <configuration>
+                    <workingDirectory>${frontend.dir}</workingDirectory>
+                    <installDirectory>${project.build.directory}</installDirectory>
+                    <skip>${skip.frontend}</skip>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>install-node-and-npm</id>
+                        <goals><goal>install-node-and-npm</goal></goals>
+                        <phase>generate-resources</phase>
+                        <configuration>
+                            <nodeVersion>${node.version}</nodeVersion>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>npm-ci</id>
+                        <goals><goal>npm</goal></goals>
+                        <phase>generate-resources</phase>
+                        <configuration>
+                            <arguments>ci --no-audit --no-fund</arguments>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>npm-build</id>
+                        <goals><goal>npm</goal></goals>
+                        <phase>generate-resources</phase>
+                        <configuration>
+                            <arguments>run build</arguments>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-war-plugin</artifactId>
+                <version>3.4.0</version>
+                <configuration>
+                    <failOnMissingWebXml>true</failOnMissingWebXml>
+                    <!-- the built SPA goes in the WAR root, next to WEB-INF -->
+                    <webResources>
+                        <resource>
+                            <directory>${frontend.dist.dir}</directory>
+                            <targetPath>/</targetPath>
+                        </resource>
+                    </webResources>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
 </project>

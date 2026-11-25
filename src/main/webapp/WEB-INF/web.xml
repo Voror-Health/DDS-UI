@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<web-app xmlns="https://jakarta.ee/xml/ns/jakartaee"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="https://jakarta.ee/xml/ns/jakartaee https://jakarta.ee/xml/ns/jakartaee/web-app_6_0.xsd"
+         version="6.0">
+
+    <!-- The Vue SPA (frontend/, built into the WAR root) -->
+    <welcome-file-list>
+        <welcome-file>index.html</welcome-file>
+    </welcome-file-list>
+
+    <!-- protected resources: CasdoorAuthenticatorValve challenges /api/* and /machine-api/* -->
+    <servlet>
+        <servlet-name>Endeavour Data Service</servlet-name>
+        <servlet-class>org.glassfish.jersey.servlet.ServletContainer</servlet-class>
+        <!-- registers the endpoint package, Jackson, @RolesAllowed and the exception mapper
+             (previously init-params here, plus Keycloak's CustomRolesAllowedFeature) -->
+        <init-param>
+            <param-name>jakarta.ws.rs.Application</param-name>
+            <param-value>org.endeavourhealth.ui.framework.JerseyApplication</param-value>
+        </init-param>
+        <load-on-startup>1</load-on-startup>
+    </servlet>
+    <servlet-mapping>
+        <servlet-name>Endeavour Data Service</servlet-name>
+        <url-pattern>/api/*</url-pattern>
+        <url-pattern>/machine-api/*</url-pattern>
+    </servlet-mapping>
+
+    <!-- public resources, no auth needed: Casdoor login config and token exchange for the SPA -->
+    <servlet>
+        <servlet-name>Public Resources</servlet-name>
+        <servlet-class>org.glassfish.jersey.servlet.ServletContainer</servlet-class>
+        <init-param>
+            <param-name>jakarta.ws.rs.Application</param-name>
+            <param-value>org.endeavourhealth.ui.framework.PublicJerseyApplication</param-value>
+        </init-param>
+        <load-on-startup>1</load-on-startup>
+    </servlet>
+    <servlet-mapping>
+        <servlet-name>Public Resources</servlet-name>
+        <url-pattern>/public/*</url-pattern>
+    </servlet-mapping>
+
+    <!--
+        Application id used to look up config (ConfigManager and the Casdoor valve both read
+        SELECT ... FROM config WHERE app_id = 'dds-ui', falling back to 'global'). Same app_id as the
+        original eds-ui. Rows used: auth (Casdoor), datasteward (publisher DSM details), the usual
+        Endeavour database rows, rabbit, server_ips (queue server admin) - see README.md.
+    -->
+    <context-param>
+        <param-name>app_id</param-name>
+        <param-value>dds-ui</param-value>
+    </context-param>
+
+    <!--
+        Casdoor authentication (META-INF/context.xml) replaces the Keycloak valve, login-config and the
+        dds-ui:api security-constraint. Every /api/* and /machine-api/* call needs one of required_roles;
+        admin actions additionally need vhp_ui_admin (@RolesAllowed, see security/Roles). vhp_service is only
+        for the queue reader's POST /machine-api/exchangeAudit/postToExchange (ServiceAccountScopeFilter).
+    -->
+    <context-param>
+        <param-name>protected_paths</param-name>
+        <param-value>/api/,/machine-api/</param-value>
+    </context-param>
+    <context-param>
+        <param-name>required_roles</param-name>
+        <param-value>vhp_ui_user,vhp_ui_admin,vhp_service</param-value>
+    </context-param>
+
+    <listener>
+        <listener-class>org.endeavourhealth.ui.framework.StartupConfig</listener-class>
+    </listener>
+    <listener>
+        <listener-class>org.endeavourhealth.ui.framework.MetricsContextListener</listener-class>
+    </listener>
+
+    <filter>
+        <filter-name>instrumentedFilter</filter-name>
+        <filter-class>io.dropwizard.metrics.servlet6.InstrumentedFilter</filter-class>
+        <init-param>
+            <param-name>name-prefix</param-name>
+            <param-value>DDS-UI</param-value>
+        </init-param>
+    </filter>
+    <filter-mapping>
+        <filter-name>instrumentedFilter</filter-name>
+        <url-pattern>/*</url-pattern>
+    </filter-mapping>
+
+    <!-- keeps service-account (vhp_service) tokens to the one machine call they are for -->
+    <filter>
+        <filter-name>serviceAccountScope</filter-name>
+        <filter-class>org.endeavourhealth.ui.web.ServiceAccountScopeFilter</filter-class>
+    </filter>
+    <filter-mapping>
+        <filter-name>serviceAccountScope</filter-name>
+        <url-pattern>/api/*</url-pattern>
+        <url-pattern>/machine-api/*</url-pattern>
+    </filter-mapping>
+
+    <!-- serves index.html for the SPA's history-mode routes (deep links, refresh) -->
+    <filter>
+        <filter-name>spaForward</filter-name>
+        <filter-class>org.endeavourhealth.ui.web.SpaForwardFilter</filter-class>
+    </filter>
+    <filter-mapping>
+        <filter-name>spaForward</filter-name>
+        <url-pattern>/*</url-pattern>
+        <dispatcher>REQUEST</dispatcher>
+    </filter-mapping>
+
+    <filter>
+        <filter-name>httpHeaderSecurity</filter-name>
+        <filter-class>org.apache.catalina.filters.HttpHeaderSecurityFilter</filter-class>
+        <async-supported>true</async-supported>
+        <init-param>
+            <param-name>hstsEnabled</param-name>
+            <param-value>true</param-value>
+        </init-param>
+        <init-param>
+            <param-name>hstsMaxAgeSeconds</param-name>
+            <param-value>31536000</param-value>
+        </init-param>
+    </filter>
+    <filter-mapping>
+        <filter-name>httpHeaderSecurity</filter-name>
+        <url-pattern>/*</url-pattern>
+        <dispatcher>REQUEST</dispatcher>
+    </filter-mapping>
+
+    <!-- all roles used in @RolesAllowed (Casdoor role names) -->
+    <security-role>
+        <role-name>vhp_ui_user</role-name>
+    </security-role>
+    <security-role>
+        <role-name>vhp_ui_admin</role-name>
+    </security-role>
+    <security-role>
+        <role-name>vhp_service</role-name>
+    </security-role>
+
+    <session-config>
+        <session-timeout>60</session-timeout>
+        <cookie-config>
+            <http-only>true</http-only>
+            <secure>true</secure>
+        </cookie-config>
+        <tracking-mode>COOKIE</tracking-mode>
+    </session-config>
+</web-app>
